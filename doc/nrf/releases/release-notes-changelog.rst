@@ -86,15 +86,6 @@ nRF9160: Asset Tracker v2
 
   * For nRF Cloud builds, the configuration section in the shadow is now initialized during the cloud connection process.
 
-nRF9160: Serial LTE Modem
--------------------------
-
-* Updated:
-
-  * Enhanced the #XHTTPCREQ AT command for better HTTP upload and download support.
-  * Enhanced the #XSLEEP AT command to support data indication when idle.
-  * Enhanced the MQTT client to support the reception of large PUBLISH payloads.
-
 nRF Desktop
 -----------
 
