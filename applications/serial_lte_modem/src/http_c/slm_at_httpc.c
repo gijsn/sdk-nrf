@@ -14,15 +14,16 @@
 #include "slm_at_host.h"
 #include "slm_at_httpc.h"
 #include "slm_util.h"
+#include "slm_native_tls.h"
 
 LOG_MODULE_REGISTER(slm_httpc, CONFIG_SLM_LOG_LEVEL);
 
 #define HTTPC_METHOD_LEN	20
 #define HTTPC_RES_LEN		256
-#define HTTPC_HEADER_LEN	512
+#define HTTPC_HEADER_LEN	1024
 #define HTTPC_REQ_LEN		(HTTPC_METHOD_LEN + HTTPC_RES_LEN + HTTPC_HEADER_LEN + 3)
 #define HTTPC_FRAG_SIZE		NET_IPV4_MTU
-#define HTTPC_BUF_LEN		1024
+#define HTTPC_BUF_LEN		2048
 #if HTTPC_REQ_LEN > HTTPC_BUF_LEN
 # error "Please specify larger HTTPC_BUF_LEN"
 #endif
@@ -57,7 +58,10 @@ static struct slm_httpc_ctx {
 	char *headers;			/* headers */
 	size_t pl_len;			/* payload length */
 	size_t total_sent;		/* payload has been sent to server */
+	size_t rsp_header_length;	/* Length of headers in HTTP response */
+	size_t rsp_body_length;		/* Length of body in HTTP response */
 	enum httpc_state state;		/* HTTPC state */
+	
 } httpc;
 
 /* global variable defined in different resources */
@@ -71,56 +75,51 @@ static K_THREAD_STACK_DEFINE(httpc_thread_stack, HTTPC_THREAD_STACK_SIZE);
 
 static K_SEM_DEFINE(http_req_sem, 0, 1);
 
+
 static void response_cb(struct http_response *rsp,
 			enum http_final_call final_data,
 			void *user_data)
 {
-	if (rsp->data_len > HTTPC_BUF_LEN) {
-		/* Increase HTTPC_BUF_LEN in case of overflow */
-		LOG_WRN("HTTP parser buffer overflow!");
-		return;
-	}
-	/* Process response body if required */
-	if (httpc.state == HTTPC_RES_HEADER_DONE) {
-		/* Response body starts from the beginning of receive buffer */
-		sprintf(rsp_buf, "\r\n#XHTTPCRSP:%d,%hu\r\n", rsp->data_len, final_data);
-		rsp_send(rsp_buf, strlen(rsp_buf));
-		data_send(data_buf, rsp->data_len);
-	}
-	/* Process response header if required */
-	if (httpc.state == HTTPC_REQ_DONE) {
-		/* Look for end of response header */
-		const uint8_t *header_end = "\r\n\r\n";
-		#define HEADER_END_LEN 4
-		uint8_t *pch = NULL;
+	ARG_UNUSED(user_data);
 
-		pch = strstr(data_buf, header_end);
-		if (!pch) {
-			LOG_DBG("There is more HTTP header data\n");
-			sprintf(rsp_buf, "\r\n#XHTTPCRSP:%d,%hu\r\n", rsp->data_len, final_data);
-			rsp_send(rsp_buf, strlen(rsp_buf));
-			data_send(data_buf, rsp->data_len);
-		} else {
-			httpc.state = HTTPC_RES_HEADER_DONE;
-			sprintf(rsp_buf, "\r\n#XHTTPCRSP:%d,%hu\r\n",
-						pch - data_buf + HEADER_END_LEN, final_data);
-			rsp_send(rsp_buf, strlen(rsp_buf));
-			data_send(data_buf, pch - data_buf + HEADER_END_LEN);
-			/* Process response body if required */
+	/* Process response header if required */
+	if (httpc.state >= HTTPC_REQ_DONE && httpc.state < HTTPC_COMPLETE) {
+		if (httpc.state != HTTPC_RES_HEADER_DONE) {
+			/* Look for end of response headers */
 			if (rsp->body_start) {
-				sprintf(rsp_buf, "\r\n#XHTTPCRSP:%d,%hu\r\n",
-					rsp->data_len - (rsp->body_start - data_buf), final_data);
+				size_t headers_len = rsp->body_start - rsp->recv_buf;
+				/* Send last chunk of headers and URC */
+				sprintf(rsp_buf, "#XHTTPHEADERS: ");
 				rsp_send(rsp_buf, strlen(rsp_buf));
-				data_send(rsp->body_start,
-					rsp->data_len - (rsp->body_start - data_buf));
+				data_send(rsp->recv_buf, headers_len);
+				httpc.rsp_header_length += headers_len;
+				sprintf(rsp_buf, "\r\n#XHTTPCRSP: %d,%hu\r\n",
+					httpc.rsp_header_length,
+					final_data);
+				rsp_send(rsp_buf, strlen(rsp_buf));
+				httpc.state = HTTPC_RES_HEADER_DONE;
+				/* Send first chunk of body */
+				sprintf(rsp_buf, "#XHTTPRESPONSE: ");
+				rsp_send(rsp_buf, strlen(rsp_buf));
+				data_send(rsp->recv_buf + headers_len,
+					  rsp->data_len - headers_len);
+				httpc.rsp_body_length += rsp->data_len - headers_len;
+			} else {
+				/* All headers */
+				data_send(rsp->recv_buf, rsp->data_len);
+				httpc.rsp_header_length += rsp->data_len;
 			}
+		} else {
+			/* All body */
+			data_send(rsp->recv_buf, rsp->data_len);
+			httpc.rsp_body_length += rsp->data_len;
 		}
 	}
 
 	if (final_data == HTTP_DATA_FINAL) {
-		httpc.state = HTTPC_COMPLETE;
-		sprintf(rsp_buf, "\r\n#XHTTPCRSP:0,%hu\r\n", final_data);
+		sprintf(rsp_buf, "\r\n#XHTTPCRSP: %d,%hu\r\n", httpc.rsp_body_length, final_data);
 		rsp_send(rsp_buf, strlen(rsp_buf));
+		httpc.state = HTTPC_COMPLETE;
 	}
 	LOG_DBG("Response data received (%zd bytes)", rsp->data_len);
 }
@@ -333,8 +332,6 @@ static int do_http_disconnect(void)
 	if (httpc.fd != INVALID_SOCKET) {
 		close(httpc.fd);
 		httpc.fd = INVALID_SOCKET;
-	} else {
-		return -ENOTCONN;
 	}
 	sprintf(rsp_buf, "\r\n#XHTTPCCON: 0\r\n");
 	rsp_send(rsp_buf, strlen(rsp_buf));
@@ -600,6 +597,10 @@ int handle_at_httpc_request(enum at_cmd_type cmd_type)
 				return err;
 			}
 		}
+		httpc.total_sent = 0;
+		httpc.state = HTTPC_INIT;
+		httpc.rsp_header_length = 0;
+		httpc.rsp_body_length = 0;
 		/* start http request thread */
 		k_thread_create(&httpc_thread, httpc_thread_stack,
 				K_THREAD_STACK_SIZEOF(httpc_thread_stack),
@@ -616,6 +617,47 @@ int handle_at_httpc_request(enum at_cmd_type cmd_type)
 
 	return err;
 }
+
+// int handle_at_httpc_payload(enum at_cmd_type cmd_type){
+// 	int err = -EINVAL;
+
+// 	switch (cmd_type) {
+// 	case AT_CMD_TYPE_READ_COMMAND:
+// 		sprintf(rsp_buf, "\r\n#XHTTPRESPONSE: ");
+// 		rsp_send(rsp_buf, strlen(rsp_buf));
+// 		rsp_send(data_buf2, strlen(data_buf2));
+// 		err = 0;
+// 		break;
+
+// 	case AT_CMD_TYPE_TEST_COMMAND:
+// 		break;
+
+// 	default:
+// 		break;
+// 	}
+
+// 	return err;
+// }
+
+// int handle_at_httpc_headers(enum at_cmd_type cmd_type){
+// 	int err = -EINVAL;
+// 	switch (cmd_type) {
+// 	case AT_CMD_TYPE_READ_COMMAND:
+// 		sprintf(rsp_buf, "\r\n#XHTTPHEADERS: ");
+// 		rsp_send(rsp_buf, strlen(rsp_buf));
+// 		rsp_send(headers_buf, strlen(headers_buf));
+// 		err = 0;
+// 		break;
+
+// 	case AT_CMD_TYPE_TEST_COMMAND:
+// 		break;
+
+// 	default:
+// 		break;
+// 	}
+
+// 	return err;	
+// }
 
 int slm_at_httpc_init(void)
 {

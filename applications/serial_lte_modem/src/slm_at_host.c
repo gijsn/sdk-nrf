@@ -20,12 +20,15 @@
 #include "slm_at_host.h"
 #include "slm_at_fota.h"
 
+#include <nrfx.h>
+#include <hal/nrf_power.h>
+
 LOG_MODULE_REGISTER(slm_at_host, CONFIG_SLM_LOG_LEVEL);
 
 #define OK_STR		"\r\nOK\r\n"
 #define ERROR_STR	"\r\nERROR\r\n"
 #define FATAL_STR	"FATAL ERROR\r\n"
-#define SLM_SYNC_STR	"Ready\r\n"
+#define SLM_SYNC_STR	"+Ready\r\n"
 
 /** The maximum allowed length of an AT command passed through the SLM
  *  The space is allocated statically. This limit is in turn limited by
@@ -264,10 +267,11 @@ int poweron_uart(void)
 	if (err) {
 		return err;
 	}
-
+	
 	k_sem_give(&tx_done);
-	uart_send(SLM_SYNC_STR, sizeof(SLM_SYNC_STR)-1);
-	k_work_submit(&delayed_send_work);
+	LOG_WRN("printing from poweron uart");
+	LOG_HEXDUMP_WRN(SLM_SYNC_STR, strlen(SLM_SYNC_STR), "TX");
+	rsp_send(SLM_SYNC_STR, strlen(SLM_SYNC_STR));
 
 	return 0;
 }
@@ -287,6 +291,7 @@ int slm_uart_configure(void)
 #if defined(CONFIG_SLM_UART_HWFC_RUNTIME)
 /* Set HWFC dynamically */
 	#if defined(CONFIG_SLM_CONNECT_UART_0)
+	LOG_WRN("Setting RTS CTS configuration");
 		#define RTS_PIN DT_PROP(DT_NODELABEL(uart0), rts_pin)
 		#define CTS_PIN DT_PROP(DT_NODELABEL(uart0), cts_pin)
 		if (slm_uart.flow_ctrl == UART_CFG_FLOW_CTRL_RTS_CTS) {
@@ -382,7 +387,7 @@ static void raw_send(struct k_work *work)
 			int size_finish = datamode_off_pending ? quit_str_len : 0;
 
 			LOG_INF("Raw send %d", size_send);
-			LOG_HEXDUMP_DBG(data, MIN(size_send, HEXDUMP_DATAMODE_MAX), "RX-DATAMODE");
+			//LOG_HEXDUMP_DBG(data, MIN(size_send, HEXDUMP_DATAMODE_MAX), "RX-DATAMODE");
 			if (datamode_handler && size_send > 0) {
 				size_sent = datamode_handler(DATAMODE_SEND, data, size_send);
 				if (size_sent > 0) {
@@ -422,6 +427,8 @@ static void inactivity_timer_handler(struct k_timer *timer)
 	ARG_UNUSED(timer);
 
 	LOG_INF("time limit reached");
+	sprintf(rsp_buf, "\r\nOK\r\n");
+	rsp_send(rsp_buf, strlen(rsp_buf));
 	if (!ring_buf_is_empty(&data_rb)) {
 		k_work_submit(&raw_send_work);
 	} else {
@@ -570,7 +577,7 @@ static void cmd_send(struct k_work *work)
 		goto done;
 	}
 
-	LOG_HEXDUMP_DBG(at_buf, at_buf_len, "RX");
+	//LOG_HEXDUMP_DBG(at_buf, at_buf_len, "RX");
 
 	if (cmd_grammar_check(at_buf, at_buf_len) != 0) {
 		LOG_ERR("AT command invalid");
@@ -841,7 +848,11 @@ int slm_at_host_init(void)
 	k_work_init(&delayed_send_work, delayed_send);
 	k_work_init_delayable(&uart_recovery_work, uart_recovery);
 	k_sem_give(&tx_done);
-	rsp_send(SLM_SYNC_STR, sizeof(SLM_SYNC_STR)-1);
+	k_sleep(K_MSEC(200));
+	LOG_WRN("printing from init slm %d", nrf_power_resetreas_get(NRF_POWER_NS));
+	nrf_power_resetreas_get(NRF_POWER_NS);
+	LOG_HEXDUMP_WRN(SLM_SYNC_STR, strlen(SLM_SYNC_STR), "TX");
+	rsp_send(SLM_SYNC_STR, strlen(SLM_SYNC_STR));
 	slm_fota_post_process();
 
 	slm_operation_mode = SLM_AT_COMMAND_MODE;

@@ -261,8 +261,10 @@ static int do_tcp_client_connect(const char *url, uint16_t port)
 	/* Open socket */
 	if (proxy.sec_tag == INVALID_SEC_TAG) {
 		ret = socket(proxy.family, SOCK_STREAM, IPPROTO_TCP);
+		LOG_WRN("invalid security tag");
 	} else {
 		ret = socket(proxy.family, SOCK_STREAM, IPPROTO_TLS_1_2);
+		LOG_WRN("valid security tag");
 	}
 	if (ret < 0) {
 		LOG_ERR("socket() failed: %d", -errno);
@@ -271,6 +273,7 @@ static int do_tcp_client_connect(const char *url, uint16_t port)
 	proxy.sock = ret;
 
 	if (proxy.sec_tag != INVALID_SEC_TAG) {
+		LOG_ERR("settint TLS options");
 		sec_tag_t sec_tag_list[1] = { proxy.sec_tag };
 		int peer_verify = TLS_PEER_VERIFY_REQUIRED;
 
@@ -285,6 +288,14 @@ static int do_tcp_client_connect(const char *url, uint16_t port)
 				 sizeof(peer_verify));
 		if (ret) {
 			LOG_ERR("setsockopt(TLS_PEER_VERIFY) error: %d", errno);
+			ret = -errno;
+			goto exit_cli;
+		}
+
+		ret = setsockopt(proxy.sock, SOL_TLS, TLS_HOSTNAME, url,
+				 strlen(url) + 1);
+		if (ret) {
+			LOG_ERR("setsockopt(TLS_HOSTNAME) error: %d", -errno);
 			ret = -errno;
 			goto exit_cli;
 		}
