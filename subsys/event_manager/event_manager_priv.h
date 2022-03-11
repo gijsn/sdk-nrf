@@ -182,14 +182,24 @@ extern "C" {
 
 
 #define _EVENT_TYPE_DECLARE(ename)					\
+	enum {_CONCAT(ename, _HAS_DYNDATA) = 0};			\
 	_EVENT_TYPE_DECLARE_COMMON(ename);				\
 	_EVENT_ALLOCATOR_FN(ename)
 
 
 #define _EVENT_TYPE_DYNDATA_DECLARE(ename)				\
+	enum {_CONCAT(ename, _HAS_DYNDATA) = 1};			\
 	_EVENT_TYPE_DECLARE_COMMON(ename);				\
 	_EVENT_ALLOCATOR_DYNDATA_FN(ename)
 
+
+#if IS_ENABLED(CONFIG_EVENT_MANAGER_PROVIDE_EVENT_SIZE)
+#define _EVENT_TYPE_DEFINE_SIZES(ename)             \
+	.struct_size = sizeof(struct ename),        \
+	.has_dyndata = _CONCAT(ename, _HAS_DYNDATA),
+#else
+#define _EVENT_TYPE_DEFINE_SIZES(ename)
+#endif
 
 #define _EVENT_TYPE_DEFINE(ename, init_log_en, log_fn, trace_data_pointer)		\
 	_EVENT_SUBSCRIBERS_ARRAY_TAGS(ename);						\
@@ -201,8 +211,35 @@ extern "C" {
 		.log_event       = (IS_ENABLED(CONFIG_LOG) ? (log_fn) : (NULL)),	\
 		.trace_data      = (IS_ENABLED(CONFIG_EVENT_MANAGER_PROFILER_TRACER) ?	\
 					(trace_data_pointer) : (NULL)),			\
+		_EVENT_TYPE_DEFINE_SIZES(ename) /* No comma here intentionally */	\
 	}
 
+/* Event hooks subscribers */
+#define _EVENT_HOOK_REGISTER(section, hook_fn, prio)                       \
+	BUILD_ASSERT((hook_fn) != NULL, "Registered hook cannot be NULL"); \
+	STRUCT_SECTION_ITERABLE(section, _CONCAT(prio, hook_fn)) = {       \
+		.hook = (hook_fn)                                          \
+	}
+
+#define _EVENT_MANAGER_HOOK_POSTINIT_REGISTER(hook_fn, prio)             \
+	BUILD_ASSERT(IS_ENABLED(CONFIG_EVENT_MANAGER_POSTINIT_HOOK),     \
+		     "Enable EVENT_MANAGER_POSTINIT_HOOK before usage"); \
+	_EVENT_HOOK_REGISTER(event_manager_postinit_hook, hook_fn, prio)
+
+#define _EVENT_HOOK_ON_SUBMIT_REGISTER(hook_fn, prio)                   \
+	BUILD_ASSERT(IS_ENABLED(CONFIG_EVENT_MANAGER_SUBMIT_HOOKS),     \
+		     "Enable EVENT_MANAGER_SUBMIT_HOOKS before usage"); \
+	_EVENT_HOOK_REGISTER(event_submit_hook, hook_fn, prio)
+
+#define _EVENT_HOOK_PREPROCESS_REGISTER(hook_fn, prio)                      \
+	BUILD_ASSERT(IS_ENABLED(CONFIG_EVENT_MANAGER_PREPROCESS_HOOKS),     \
+		     "Enable EVENT_MANAGER_PREPROCESS_HOOKS before usage"); \
+	_EVENT_HOOK_REGISTER(event_preprocess_hook, hook_fn, prio)
+
+#define _EVENT_HOOK_POSTPROCESS_REGISTER(hook_fn, prio)                      \
+	BUILD_ASSERT(IS_ENABLED(CONFIG_EVENT_MANAGER_POSTPROCESS_HOOKS),     \
+		     "Enable EVENT_MANAGER_POSTPROCESS_HOOKS before usage"); \
+	_EVENT_HOOK_REGISTER(event_postprocess_hook, hook_fn, prio)
 
 /**
  * @brief Bitmask indicating event is displayed.
@@ -287,11 +324,46 @@ struct event_type {
 
 	/** Custom data related to tracking. */
 	const void *trace_data;
+
+#if IS_ENABLED(CONFIG_EVENT_MANAGER_PROVIDE_EVENT_SIZE)
+	/** The size of the event structure */
+	uint16_t struct_size;
+
+	/** The flag that stores the information if the event type contains dyndata */
+	bool has_dyndata;
+#endif
 };
 
 extern struct event_type _event_type_list_start[];
 extern struct event_type _event_type_list_end[];
 
+
+/** @brief Structure used to register event manager initialization hook
+ */
+struct event_manager_postinit_hook {
+	/** @brief Hook function */
+	int (*hook)(void);
+};
+/** @brief Structure used to register event submit hook
+ */
+struct event_submit_hook {
+	/** @brief Hook function */
+	void (*hook)(const struct event_header *eh);
+};
+
+/** @brief Structure used to register event preprocess hook
+ */
+struct event_preprocess_hook {
+	/** @brief Hook function */
+	void (*hook)(const struct event_header *eh);
+};
+
+/** @brief Structure used to register event postprocess hook
+ */
+struct event_postprocess_hook {
+	/** @brief Hook function */
+	void (*hook)(const struct event_header *eh);
+};
 
 /** @brief Submit an event to the Event Manager.
  *

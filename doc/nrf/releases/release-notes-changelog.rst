@@ -42,26 +42,11 @@ Application development
 
   * Issue with NCS Toolchain delimiter handling on MacOS, which could in special situations result in the build system not being able to properly locate the correct program needed.
 
-This section provides detailed lists of changes by :ref:`application <applications>`.
-
-nRF9160: Asset Tracker v2
--------------------------
-
- * Added:
-
-   * Support for :ref:`Bosch Software Environmental Cluster (BSEC) library <bosch_software_environmental_cluster_library>` driver .
-   * Support for indoor air quality (IAQ) readings retrieved from the BME680 sensor on Thingy:91. For more information, see the :ref:`asset_tracker_v2_sensor_module`.
-
 Protocols
 =========
 
 This section provides detailed lists of changes by :ref:`protocol <protocols>`.
 See `Samples`_ for lists of changes for the protocol-related samples.
-
-Matter
-------
-
-|no_changes_yet_note|
 
 Thread
 ------
@@ -81,6 +66,11 @@ This section provides detailed lists of changes by :ref:`application <applicatio
 
 nRF9160: Asset Tracker v2
 -------------------------
+
+* Added:
+
+   * Support for :ref:`Bosch Software Environmental Cluster (BSEC) library <bosch_software_environmental_cluster_library>` driver .
+   * Support for indoor air quality (IAQ) readings retrieved from the BME680 sensor on Thingy:91. For more information, see the :ref:`asset_tracker_v2_sensor_module`.
 
 * Updated:
 
@@ -118,6 +108,10 @@ Bluetooth samples
     * Fixed handling of the disable Constant Tone Extension command.
     * The front-end module test parameters are not set to their default value after the DTM reset command.
     * Added the vendor-specific ``FEM_DEFAULT_PARAMS_SET`` command for restoring the default front-end module parameters.
+
+  * :ref:`peripheral_hids_mouse` sample:
+
+    * Increased the main stack size from 1024 to 1536 bytes.
 
 Bluetooth mesh samples
 ----------------------
@@ -178,20 +172,6 @@ Libraries
 
 This section provides detailed lists of changes by :ref:`library <libraries>`.
 
-Libraries for networking
-------------------------
-
-* :ref:`lib_nrf_cloud_rest` library:
-
-   * Added JSON Web Token (JWT) autogeneration feature.
-
-     If enabled, the nRF Cloud REST library automatically generates a JWT if none is provided by the user when making REST requests.
-
-  * Updated:
-
-    * During the connection process, shadow data is sent to the application even if no "config" section is present.
-    * The application can now send shadow updates earlier in the connection process.
-
 Bluetooth libraries and services
 --------------------------------
 
@@ -206,11 +186,39 @@ Bluetooth libraries and services
 Libraries for networking
 ------------------------
 
+* :ref:`lib_nrf_cloud_rest` library:
+
+  * Added JSON Web Token (JWT) autogeneration feature.
+    If enabled, the nRF Cloud REST library automatically generates a JWT if none is provided by the user when making REST requests.
+
+  * Updated:
+
+    * During the connection process, shadow data is sent to the application even if no "config" section is present.
+    * The application can now send shadow updates earlier in the connection process.
+
 * :ref:`lib_download_client` library:
 
-  * Fixed
+  * Fixed an issue where downloads of COAP URIs would fail when they contained multiple path elements.
 
-    * An issue where downloads of COAP URIs would fail when they contained multiple path elements.
+Other libraries
+---------------
+
+* :ref:`event_manager`:
+
+  * To add :c:func:`event_manager_event_size` function with corresponding :kconfig:`CONFIG_EVENT_MANAGER_PROVIDE_EVENT_SIZE` option.
+
+  * Added universal hooks for event manager initialization, event submission, preprocessing, and postprocessing.
+    This includes implementation of macros that register hooks, grouped as follows:
+
+    * :c:macro:`EVENT_HOOK_ON_SUBMIT_REGISTER`, :c:macro:`EVENT_HOOK_ON_SUBMIT_REGISTER_FIRST`, :c:macro:`EVENT_HOOK_ON_SUBMIT_REGISTER_LAST`
+    * :c:macro:`EVENT_HOOK_PREPROCESS_REGISTER`, :c:macro:`EVENT_HOOK_PREPROCESS_REGISTER_FIRST`, :c:macro:`EVENT_HOOK_PREPROCESS_REGISTER_LAST`
+    * :c:macro:`EVENT_HOOK_POSTPROCESS_REGISTER`, :c:macro:`EVENT_HOOK_POSTPROCESS_REGISTER_FIRST`, :c:macro:`EVENT_HOOK_POSTPROCESS_REGISTER_LAST`
+
+* :ref:`event_manager_profiler_tracer`:
+
+  * Updated the :ref:`event_manager_profiler_tracer` library.
+    The library is no longer directly referenced from the Event Manager.
+    Instead, it uses the Event Manager hooks to connect with the manager.
 
 sdk-nrfxlib
 -----------
