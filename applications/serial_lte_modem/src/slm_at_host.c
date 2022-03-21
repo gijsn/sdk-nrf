@@ -295,10 +295,12 @@ int slm_uart_configure(void)
 		#define RTS_PIN DT_PROP(DT_NODELABEL(uart0), rts_pin)
 		#define CTS_PIN DT_PROP(DT_NODELABEL(uart0), cts_pin)
 		if (slm_uart.flow_ctrl == UART_CFG_FLOW_CTRL_RTS_CTS) {
+			LOG_WRN("Setting UART0 RTS CTS");
 			nrf_uarte_hwfc_pins_set(NRF_UARTE0,
 						RTS_PIN,
 						CTS_PIN);
 		} else {
+			LOG_WRN("Clearing RTS state");
 			nrf_gpio_pin_clear(RTS_PIN);
 			nrf_gpio_cfg_output(RTS_PIN);
 		}
@@ -418,6 +420,7 @@ static void raw_send(struct k_work *work)
 	/* resume UART RX in case of stopped by buffer full */
 	if (datamode_rx_disabled) {
 		(void)uart_receive();
+		nrf_gpio_pin_clear(RTS_PIN);
 		datamode_rx_disabled = false;
 	}
 }
@@ -467,7 +470,8 @@ static int raw_rx_handler(const uint8_t *data, int datalen)
 	ret = ring_buf_space_get(&data_rb);
 	if (ret < UART_RX_LEN) {
 		LOG_WRN("data buffer full (%d)", ret);
-		uart_rx_disable(uart_dev);
+		//uart_rx_disable(uart_dev);
+		nrf_gpio_pin_set(RTS_PIN);
 		return -1;
 	}
 
@@ -743,7 +747,7 @@ static void uart_callback(const struct device *dev, struct uart_event *evt, void
 		}
 		break;
 	case UART_RX_DISABLED:
-		LOG_DBG("RX_DISABLED");
+		LOG_WRN("RX_DISABLED");
 		if (slm_operation_mode == SLM_DATA_MODE) {
 			datamode_rx_disabled = true;
 			/* flush data in ring-buffer, if any */
